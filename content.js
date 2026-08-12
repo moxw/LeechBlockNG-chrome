@@ -15,6 +15,96 @@ const TIMER_LOCATIONS = [
 
 var gTimer;
 var gAlert;
+var gWhatsAppChatName = undefined;
+var gWhatsAppObserver;
+var gWhatsAppNotifyTimer;
+
+// Normalize page text for comparison
+//
+function normalizeText(text) {
+	return (text || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
+// Check whether current page is WhatsApp Web
+//
+function isWhatsAppWeb() {
+	return location.hostname == "web.whatsapp.com";
+}
+
+// Return the active WhatsApp Web chat name, if any
+//
+function getWhatsAppChatName() {
+	if (!isWhatsAppWeb()) {
+		return "";
+	}
+
+	let selectors = [
+		'#main header [data-testid="conversation-info-header-chat-title"]',
+		'#main header [data-testid="conversation-info-header"] [data-testid="conversation-info-header-chat-title"]',
+		'#main header [data-testid="conversation-info-header"] span[title]',
+		'#main header [data-testid="conversation-info-header"] [title]'
+	];
+	for (let selector of selectors) {
+		let element = document.querySelector(selector);
+		if (!element) {
+			continue;
+		}
+
+		let name = normalizeText(element.textContent) || normalizeText(element.getAttribute("title"));
+		if (name) {
+			return name;
+		}
+	}
+
+	return "";
+}
+
+// Notify background script when active WhatsApp Web chat changes
+//
+function notifyWhatsAppChat() {
+	if (!isWhatsAppWeb()) {
+		return;
+	}
+
+	let chatName = getWhatsAppChatName();
+	if (chatName == gWhatsAppChatName) {
+		return;
+	}
+
+	gWhatsAppChatName = chatName;
+	browser.runtime.sendMessage({ type: "whatsapp-chat", chatName: chatName });
+}
+
+// Schedule WhatsApp Web chat notification
+//
+function scheduleWhatsAppChatNotify() {
+	if (gWhatsAppNotifyTimer) {
+		return;
+	}
+
+	gWhatsAppNotifyTimer = window.setTimeout(function () {
+		gWhatsAppNotifyTimer = null;
+		notifyWhatsAppChat();
+	}, 250);
+}
+
+// Watch WhatsApp Web for active chat changes
+//
+function watchWhatsAppChat() {
+	if (!isWhatsAppWeb() || gWhatsAppObserver) {
+		return;
+	}
+
+	let target = document.body || document.documentElement;
+	if (!target) {
+		window.setTimeout(watchWhatsAppChat, 250);
+		return;
+	}
+
+	gWhatsAppObserver = new MutationObserver(scheduleWhatsAppChatNotify);
+	gWhatsAppObserver.observe(target, { childList: true, subtree: true, characterData: true });
+	scheduleWhatsAppChatNotify();
+}
 
 // Notify background script that page has loaded
 //
@@ -193,6 +283,16 @@ function onBlur(event) {
 }
 
 function onUnload(event) {
+	if (gWhatsAppObserver) {
+		gWhatsAppObserver.disconnect();
+		gWhatsAppObserver = null;
+	}
+
+	if (gWhatsAppNotifyTimer) {
+		window.clearTimeout(gWhatsAppNotifyTimer);
+		gWhatsAppNotifyTimer = null;
+	}
+
 	if (gTimer && gTimer.parentNode) {
 		gTimer.parentNode.removeChild(gTimer);
 		gTimer = null;
@@ -207,6 +307,7 @@ function onUnload(event) {
 browser.runtime.onMessage.addListener(handleMessage);
 
 notifyLoaded();
+watchWhatsAppChat();
 
 window.addEventListener("focus", onFocus);
 window.addEventListener("blur", onBlur);
