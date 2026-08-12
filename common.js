@@ -56,6 +56,7 @@ const PER_SET_OPTIONS = {
 	minBlock: { type: "string", def: "", id: "minBlock" },
 	countFocus: { type: "boolean", def: true, id: "countFocus" },
 	countAudio: { type: "boolean", def: false, id: "countAudio" },
+	whatsappChatAllowlist: { type: "string", def: "", id: "whatsappChatAllowlist" },
 	showKeyword: { type: "boolean", def: true, id: "showKeyword" },
 	titleOnly: { type: "boolean", def: false, id: "titleOnly" },
 	delayFirst: { type: "boolean", def: true, id: "delayFirst" },

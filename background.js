@@ -8,6 +8,8 @@ const browser = chrome;
 
 const BLOCKABLE_URL = /^(http|file|chrome|edge|extension)/i;
 const CLOCKABLE_URL = /^(http|file)/i;
+const WHATSAPP_WEB_HOST = "web.whatsapp.com";
+const ALLOWED_TAB_KEY_PREFIX = "allowedTab:";
 const EXTENSION_URL = browser.runtime.getURL("");
 const BLOCKED_PAGE_URL = browser.runtime.getURL(BLOCKED_PAGE);
 const DELAYED_PAGE_URL = browser.runtime.getURL(DELAYED_PAGE);
@@ -53,10 +55,135 @@ function initTab(id) {
 			audible: false,
 			focused: false,
 			loaded: false,
-			loadedTime: 0
+			loadedTime: 0,
+			whatsappChatName: ""
 		};
 		return true;
 	}
+}
+
+// Persist temporary access across Manifest V3 service-worker restarts
+//
+function getAllowedTabKey(id) {
+	return ALLOWED_TAB_KEY_PREFIX + id;
+}
+
+function getAllowedTabState(id) {
+	return {
+		allowedHost: gTabs[id].allowedHost,
+		allowedPath: gTabs[id].allowedPath,
+		allowedSet: gTabs[id].allowedSet,
+		allowedEndTime: gTabs[id].allowedEndTime
+	};
+}
+
+function saveAllowedTab(id) {
+	if (!browser.storage.session || !gTabs[id]) {
+		return;
+	}
+
+	let key = getAllowedTabKey(id);
+	browser.storage.session.set({ [key]: getAllowedTabState(id) }).catch(
+		function (error) { warn("Cannot save allowed tab: " + error); }
+	);
+}
+
+function clearAllowedTab(id) {
+	if (!browser.storage.session) {
+		return;
+	}
+
+	browser.storage.session.remove(getAllowedTabKey(id)).catch(
+		function (error) { warn("Cannot clear allowed tab: " + error); }
+	);
+}
+
+async function restoreAllowedTabs() {
+	if (!browser.storage.session) {
+		return;
+	}
+
+	try {
+		let entries = await browser.storage.session.get(null);
+		for (let key in entries) {
+			if (!key.startsWith(ALLOWED_TAB_KEY_PREFIX)) {
+				continue;
+			}
+
+			let id = Number(key.substring(ALLOWED_TAB_KEY_PREFIX.length));
+			let state = entries[key];
+			if (!Number.isInteger(id) || !state || !state.allowedSet) {
+				continue;
+			}
+
+			initTab(id);
+			gTabs[id].allowedHost = state.allowedHost;
+			gTabs[id].allowedPath = state.allowedPath;
+			gTabs[id].allowedSet = state.allowedSet;
+			gTabs[id].allowedEndTime = state.allowedEndTime;
+		}
+	} catch (error) {
+		warn("Cannot restore allowed tabs: " + error);
+	}
+}
+
+// Normalize WhatsApp Web chat names for matching
+//
+function decodeHTMLEntities(text) {
+	return (text || "").replace(/&(#x[\da-f]+|#\d+|quot|apos|amp|lt|gt);/gi, function (match, entity) {
+		entity = entity.toLowerCase();
+		if (entity == "quot") return "\"";
+		if (entity == "apos") return "'";
+		if (entity == "amp") return "&";
+		if (entity == "lt") return "<";
+		if (entity == "gt") return ">";
+		if (entity.startsWith("#x")) return String.fromCodePoint(parseInt(entity.substring(2), 16));
+		if (entity.startsWith("#")) return String.fromCodePoint(parseInt(entity.substring(1), 10));
+		return match;
+	});
+}
+
+function normalizeWhatsAppChatName(name) {
+	return decodeHTMLEntities(name).normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function getWhatsAppChatNameKeys(name) {
+	let normalized = normalizeWhatsAppChatName(name);
+	let withoutEmoji = normalized
+			.replace(/[\u200d\ufe0e\ufe0f]/g, "")
+			.replace(/\p{Extended_Pictographic}/gu, "")
+			.replace(/\s+/g, " ")
+			.trim();
+	return Array.from(new Set([normalized, withoutEmoji].filter(Boolean)));
+}
+
+// Return list of WhatsApp Web chat names excluded from time counting
+//
+function getWhatsAppChatAllowlist(set) {
+	let allowlist = gOptions[`whatsappChatAllowlist${set}`];
+	if (!allowlist) {
+		return [];
+	}
+
+	return allowlist.split(/\r?\n/)
+			.flatMap(getWhatsAppChatNameKeys)
+			.filter(Boolean);
+}
+
+// Check whether the current WhatsApp Web chat should count toward time limits
+//
+function shouldCountWhatsAppChat(id, set, parsedURL) {
+	if (parsedURL.host != WHATSAPP_WEB_HOST) {
+		return true;
+	}
+
+	let chatNameKeys = getWhatsAppChatNameKeys(gTabs[id].whatsappChatName);
+	if (chatNameKeys.length == 0) {
+		return true;
+	}
+
+	let allowlist = getWhatsAppChatAllowlist(set);
+	return !chatNameKeys.some((chatName) => allowlist.includes(chatName));
 }
 
 // Create (precompile) regular expressions
@@ -201,7 +328,11 @@ function retrieveOptions(update) {
 		gStorage.get().then(onGot, onError);
 	}
 
-	function onGot(options) {
+	async function onGot(options) {
+		if (!update) {
+			await restoreAllowedTabs();
+		}
+
 		// Copy retrieved options (exclude timedata if update)
 		for (let option in options) {
 			if (!update || !/^timedata/.test(option)) {
@@ -491,6 +622,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 		gTabs[id].allowedPath = null;
 		gTabs[id].allowedSet = 0;
 		gTabs[id].allowedEndTime = 0;
+		clearAllowedTab(id);
 	}
 
 	// Get referrer URL for this page
@@ -598,6 +730,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 			let allowOverLock = gOptions[`allowOverLock${set}`];
 			let showTimer = gOptions[`showTimer${set}`];
 			let allowKeywords = gOptions[`allowKeywords${set}`];
+			let countTimeLimit = shouldCountWhatsAppChat(id, set, parsedURL);
 
 			updateRolloverTime(timedata, limitMins, limitPeriod, periodStart);
 
@@ -635,7 +768,7 @@ function checkTab(id, isBeforeNav, isRepeat) {
 
 			// Check time limit
 			let secsLeftBeforeLimit = Infinity;
-			if (days[day] && limitMins && limitPeriod) {
+			if (countTimeLimit && days[day] && limitMins && limitPeriod) {
 				// Compute exact seconds before this time limit expires
 				let secsRollover = rollover ? timedata[5] : 0;
 				secsLeftBeforeLimit = secsRollover + (limitMins * 60);
@@ -940,6 +1073,10 @@ function updateTimeData(id, secsOpen, secsFocus) {
 
 		// Test URL against block/allow regular expressions
 		if (testURL(pageURL, referrer, blockRE, allowRE, referRE, allowRefers)) {
+			if (!shouldCountWhatsAppChat(id, set, parsedURL)) {
+				continue;
+			}
+
 			// Get options for this set
 			let timedata = gOptions[`timedata${set}`];
 			let countFocus = gOptions[`countFocus${set}`];
@@ -1119,8 +1256,9 @@ function createBlockInfo(id, url) {
 		blockedURL += "#" + parsedURL.hash;
 	}
 
-	// Get disable link option
-	let disableLink = gOptions["disableLink"];
+	// Never let the destination link bypass a delaying-page countdown
+	let disableLink = gOptions["disableLink"]
+			|| /\/delayed\.html(?:[?#]|$)/.test(url);
 
 	// Get keyword match (if applicable)
 	let keywordMatch = gOptions[`showKeyword${blockedSet}`] ? gTabs[id].keyword : null;
@@ -1524,6 +1662,7 @@ function allowBlockedPage(id, url, set, autoLoad) {
 		// No end time for allowing access
 		gTabs[id].allowedEndTime = 0;
 	}
+	saveAllowedTab(id);
 
 	if (autoLoad) {
 		// Redirect page
@@ -1790,6 +1929,12 @@ function handleMessage(message, sender, sendResponse) {
 			gTabs[sender.tab.id].url = getCleanURL(message.url);
 			break;
 
+		case "whatsapp-chat":
+			// Register the active WhatsApp Web chat name for time-limit exceptions
+			initTab(sender.tab.id);
+			gTabs[sender.tab.id].whatsappChatName = message.chatName || "";
+			break;
+
 		case "lockdown":
 			if (!message.endTime) {
 				// Lockdown canceled
@@ -1854,6 +1999,9 @@ function handleTabCreated(tab) {
 		gTabs[tab.id].allowedPath = gTabs[tab.openerTabId].allowedPath;
 		gTabs[tab.id].allowedSet = gTabs[tab.openerTabId].allowedSet;
 		gTabs[tab.id].allowedEndTime = gTabs[tab.openerTabId].allowedEndTime;
+		if (gTabs[tab.id].allowedSet) {
+			saveAllowedTab(tab.id);
+		}
 	}
 }
 
@@ -1930,6 +2078,7 @@ function handleTabRemoved(tabId, removeInfo) {
 	}
 
 	if (gTabs[tabId]) {
+		clearAllowedTab(tabId);
 		delete gTabs[tabId];
 	}
 }
