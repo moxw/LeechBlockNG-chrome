@@ -1257,8 +1257,9 @@ function createBlockInfo(id, url) {
 	}
 
 	// Never let the destination link bypass a delaying-page countdown
-	let disableLink = gOptions["disableLink"]
-			|| /\/delayed\.html(?:[?#]|$)/.test(url);
+	let isDelayedPage = /\/delayed\.html(?:[?#]|$)/.test(url);
+	let disableLink = gOptions["disableLink"] || isDelayedPage;
+	let enableLinkAfterDelay = isDelayedPage && !gOptions["disableLink"];
 
 	// Get keyword match (if applicable)
 	let keywordMatch = gOptions[`showKeyword${blockedSet}`] ? gTabs[id].keyword : null;
@@ -1312,6 +1313,7 @@ function createBlockInfo(id, url) {
 		blockedSetName: blockedSetName,
 		blockedURL: blockedURL,
 		disableLink: disableLink,
+		enableLinkAfterDelay: enableLinkAfterDelay,
 		keywordMatch: keywordMatch,
 		password: password,
 		customMsg: customMsg,
