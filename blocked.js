@@ -7,7 +7,6 @@ const browser = chrome;
 var gBlockedURL;
 var gBlockedSet;
 var gHashCode;
-var gEnableLinkAfterDelay;
 
 // Create 32-bit integer hash code from string
 //
@@ -27,7 +26,6 @@ function processBlockInfo(info) {
 	gBlockedURL = info.blockedURL;
 	gBlockedSet = info.blockedSet;
 	gHashCode = info.password ? hashCode32(info.password) : 0;
-	gEnableLinkAfterDelay = info.enableLinkAfterDelay;
 
 	// Set theme
 	let themeLink = document.getElementById("themeLink");
@@ -152,14 +150,7 @@ function onCountdownTimer(countdown) {
 			blockedURL: gBlockedURL,
 			blockedSet: gBlockedSet
 		};
-		browser.runtime.sendMessage(message).then(function (response) {
-			if (response && response.allowed && gEnableLinkAfterDelay) {
-				let blockedURLLink = document.getElementById("lbBlockedURLLink");
-				if (blockedURLLink && gBlockedURL) {
-					blockedURLLink.setAttribute("href", gBlockedURL);
-				}
-			}
-		});
+		browser.runtime.sendMessage(message);
 	}
 }
 

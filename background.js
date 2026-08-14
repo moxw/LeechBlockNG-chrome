@@ -1256,10 +1256,8 @@ function createBlockInfo(id, url) {
 		blockedURL += "#" + parsedURL.hash;
 	}
 
-	// Never let the destination link bypass a delaying-page countdown
-	let isDelayedPage = /\/delayed\.html(?:[?#]|$)/.test(url);
-	let disableLink = gOptions["disableLink"] || isDelayedPage;
-	let enableLinkAfterDelay = isDelayedPage && !gOptions["disableLink"];
+	// Get disable link option
+	let disableLink = gOptions["disableLink"];
 
 	// Get keyword match (if applicable)
 	let keywordMatch = gOptions[`showKeyword${blockedSet}`] ? gTabs[id].keyword : null;
@@ -1313,7 +1311,6 @@ function createBlockInfo(id, url) {
 		blockedSetName: blockedSetName,
 		blockedURL: blockedURL,
 		disableLink: disableLink,
-		enableLinkAfterDelay: enableLinkAfterDelay,
 		keywordMatch: keywordMatch,
 		password: password,
 		customMsg: customMsg,
@@ -1643,7 +1640,7 @@ function allowBlockedPage(id, url, set, autoLoad) {
 	//log("allowBlockedPage: " + id + " " + url + " " + set);
 
 	if (!gGotOptions || set < 1 || set > gNumSets) {
-		return false;
+		return;
 	}
 
 	// Get parsed URL for this page
@@ -1670,8 +1667,6 @@ function allowBlockedPage(id, url, set, autoLoad) {
 		// Redirect page
 		browser.tabs.update(id, { url: url });
 	}
-
-	return true;
 }
 
 // Add site to block set
@@ -1910,11 +1905,10 @@ function handleMessage(message, sender, sendResponse) {
 
 		case "delayed":
 			// Delaying page countdown completed
-			let allowed = allowBlockedPage(sender.tab.id,
+			allowBlockedPage(sender.tab.id,
 					message.blockedURL,
 					message.blockedSet,
 					gOptions[`delayAutoLoad${message.blockedSet}`]);
-			sendResponse({ allowed: allowed });
 			break;
 
 		case "discard-time":
