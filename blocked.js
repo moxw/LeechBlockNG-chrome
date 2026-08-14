@@ -152,8 +152,8 @@ function onCountdownTimer(countdown) {
 			blockedURL: gBlockedURL,
 			blockedSet: gBlockedSet
 		};
-		browser.runtime.sendMessage(message).then(function () {
-			if (gEnableLinkAfterDelay) {
+		browser.runtime.sendMessage(message).then(function (response) {
+			if (response && response.allowed && gEnableLinkAfterDelay) {
 				let blockedURLLink = document.getElementById("lbBlockedURLLink");
 				if (blockedURLLink && gBlockedURL) {
 					blockedURLLink.setAttribute("href", gBlockedURL);

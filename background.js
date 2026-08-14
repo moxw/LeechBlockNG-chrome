@@ -1643,7 +1643,7 @@ function allowBlockedPage(id, url, set, autoLoad) {
 	//log("allowBlockedPage: " + id + " " + url + " " + set);
 
 	if (!gGotOptions || set < 1 || set > gNumSets) {
-		return;
+		return false;
 	}
 
 	// Get parsed URL for this page
@@ -1670,6 +1670,8 @@ function allowBlockedPage(id, url, set, autoLoad) {
 		// Redirect page
 		browser.tabs.update(id, { url: url });
 	}
+
+	return true;
 }
 
 // Add site to block set
@@ -1908,10 +1910,11 @@ function handleMessage(message, sender, sendResponse) {
 
 		case "delayed":
 			// Delaying page countdown completed
-			allowBlockedPage(sender.tab.id,
+			let allowed = allowBlockedPage(sender.tab.id,
 					message.blockedURL,
 					message.blockedSet,
 					gOptions[`delayAutoLoad${message.blockedSet}`]);
+			sendResponse({ allowed: allowed });
 			break;
 
 		case "discard-time":
